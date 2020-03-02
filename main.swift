@@ -136,8 +136,8 @@ func renderHTML(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     """
 }
 
-func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], format: String, stops: Int, start: String?, noPack: [String], catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
-    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
+func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
+    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
     while index < arguments.count {
         switch arguments[index] {
         case "--seed": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
@@ -147,6 +147,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         case "--stops": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]), (1...destinations.count).contains(value) else { throw NSError(domain: "WindowSeat", code: 9, userInfo: [NSLocalizedDescriptionKey: "--stops must be a whole number from 1 to \(destinations.count)"]) }; stops = value
         case "--start": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 10, userInfo: [NSLocalizedDescriptionKey: "--start needs a destination name"]) }; start = arguments[index]
         case "--no-pack": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--no-pack needs an item name"]) }; noPack.append(arguments[index])
+        case "--reverse": routeOptionUsed = true; reverse = true
         case "--catalog": catalog = true
         case "--format": index += 1; guard index < arguments.count, ["text", "html", "json"].contains(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text, html, or json"]) }; format = arguments[index]
         case "--self-test": selfTest = true
@@ -155,7 +156,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         }
         index += 1
     }
-    return (seed, pack, save, avoids, format, stops, start, noPack, catalog, routeOptionUsed, selfTest, help)
+    return (seed, pack, save, avoids, format, stops, start, noPack, reverse, catalog, routeOptionUsed, selfTest, help)
 }
 
 func resolveDestination(_ name: String) throws -> Int {
@@ -197,6 +198,10 @@ func runSelfTests() -> Bool {
     let second = render(seed: 42, packLimit: 6, stops: itinerary(seed: 42, packLimit: 6))
     let other = render(seed: 43, packLimit: 6, stops: itinerary(seed: 43, packLimit: 6))
     guard first == second, first != other else { return false }
+    let forwardStops = itinerary(seed: 42, packLimit: 6)
+    var reverseStops = forwardStops
+    reverseStops.reverse()
+    guard render(seed: 42, packLimit: 6, stops: reverseStops).contains("STOP 1 · \(forwardStops.last!.destination.name)") else { return false }
     for seed in 0...200 { for limit in 0...12 {
         let stops = itinerary(seed: seed, packLimit: limit)
         guard stops.count == 4, Set(stops.map { $0.destination.name }).count == 4 else { return false }
@@ -212,6 +217,7 @@ func runSelfTests() -> Bool {
     do { let one = try parse(arguments: ["--stops", "1"]); guard one.stops == 1 else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--start", "mArMaLaDe Moon"]); guard parsed.start == "mArMaLaDe Moon", try resolveDestination(parsed.start!) == 0 else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--no-pack", "PENCIL", "--no-pack", "pencil"]); guard parsed.noPack.count == 2, try resolvePackingExclusions(parsed.noPack) == ["pencil"] else { return false } } catch { return false }
+    do { let parsed = try parse(arguments: ["--reverse"]); guard parsed.reverse else { return false } } catch { return false }
     do { let help = try parse(arguments: ["--help"]); guard help.help else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["mArMaLaDe MoOn", "The Inland Sea", "the inland sea"]); guard avoided.count == 2 else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["Hotel Yesterday"]); let a = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); let b = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); guard a == b, !a.contains("Hotel Yesterday") else { return false } } catch { return false }
@@ -232,6 +238,10 @@ func runSelfTests() -> Bool {
         guard json.contains("Marmalade Moon") else { return false }
     } catch { return false }
     do {
+        let json = try renderJSON(seed: 42, packLimit: 6, stops: reverseStops)
+        guard let data = json.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let entries = object["stops"] as? [[String: Any]], entries.first?["name"] as? String == forwardStops.last!.destination.name else { return false }
+    } catch { return false }
+    do {
         let catalog = try renderCatalogJSON()
         guard let data = catalog.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let entries = object["destinations"] as? [[String: Any]], entries.count == destinations.count, entries.first?["name"] as? String == destinations[0].name else { return false }
         guard renderCatalog().contains("WINDOW SEAT DESTINATION CATALOG"), renderCatalogHTML().contains("<article>") else { return false }
@@ -242,8 +252,9 @@ func runSelfTests() -> Bool {
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
     if options.catalog && (options.routeOptionUsed || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
+    if options.reverse && options.start != nil { throw NSError(domain: "WindowSeat", code: 16, userInfo: [NSLocalizedDescriptionKey: "--reverse cannot be combined with --start"]) }
     if options.help {
-        print("Usage: window-seat [--catalog] [--seed N] [--pack N] [--stops N] [--start NAME] [--avoid NAME]... [--no-pack ITEM]... [--format text|html|json] [--save PATH] [--self-test]")
+        print("Usage: window-seat [--catalog] [--seed N] [--pack N] [--stops N] [--start NAME] [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--self-test]")
         print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))")
         let validPackingItems = Set(destinations.flatMap { $0.packing.map { $0.0 } }).sorted()
         print("Valid packing items: \(validPackingItems.joined(separator: ", "))")
@@ -263,7 +274,8 @@ do {
     let startingIndex = try options.start.map(resolveDestination)
     if let startingIndex, excluded.contains(startingIndex) { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--start destination is excluded by --avoid"]) }
     let excludedPacking = try resolvePackingExclusions(options.noPack)
-    let stops = itinerary(seed: options.seed, packLimit: options.pack, excluded: excluded, stopCount: options.stops, startingIndex: startingIndex, excludedPacking: excludedPacking)
+    var stops = itinerary(seed: options.seed, packLimit: options.pack, excluded: excluded, stopCount: options.stops, startingIndex: startingIndex, excludedPacking: excludedPacking)
+    if options.reverse { stops.reverse() }
     let output: String
     if options.format == "html" {
         output = renderHTML(seed: options.seed, packLimit: options.pack, stops: stops)
