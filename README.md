@@ -25,3 +25,5 @@ Options are `--catalog`, `--seed <whole number>`, `--pack <positive whole number
 `--reverse` reverses the selected itinerary while retaining each stop’s generated fictional distance and packing data. Distances are story details, not geographic routing. This option cannot combine with `--start` or `--catalog`.
 
 Repeat `--only NAME` to restrict the destination pool. Names match without case sensitivity; duplicates are ignored. Include at least the requested stop count and any selected start. Overlap with `--avoid` is an error. Routes without `--only` retain their previous seeded output.
+
+`--packing-list` prints an alphabetized list of packed items and their budget unit costs, aggregated from the selected route. It supports text or JSON and respects route and packing exclusions; HTML and catalog combinations are rejected. Units represent packing budget, not item quantity.

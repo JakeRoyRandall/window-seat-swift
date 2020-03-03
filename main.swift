@@ -117,6 +117,29 @@ func renderCatalogHTML() -> String {
     return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Window Seat · catalog</title><style>body{max-width:820px;margin:40px auto;padding:0 24px;background:#f5f0e6;color:#1e2b2b;font-family:Georgia,serif}article{border-top:2px solid;padding:18px 0}h1{font-size:48px}h2{color:#e85d3f}p{line-height:1.5}b{font:700 11px monospace}</style></head><body><h1>Window Seat destinations</h1><p>A fictional stay-at-home travel catalog.</p>\(cards)<footer>All destinations and stories are invented. Created retrospectively in September 2026.</footer></body></html>"
 }
 
+func packingTotals(_ stops: [Stop]) -> [String: Int] {
+    var totals: [String: Int] = [:]
+    for item in stops.flatMap(\.packed) { totals[item.0, default: 0] += item.1 }
+    return totals
+}
+
+func renderPackingList(_ stops: [Stop]) -> String {
+    let totals = packingTotals(stops)
+    var output = "WINDOW SEAT PACKING LIST\n"
+    if totals.isEmpty { return output + "Nothing packed: just optimism.\n" }
+    for name in totals.keys.sorted() { output += "- \(name): \(totals[name]!) unit(s)\n" }
+    output += "Total packed units: \(totals.values.reduce(0, +))\n"
+    return output
+}
+
+func renderPackingListJSON(_ stops: [Stop]) throws -> String {
+    let totals = packingTotals(stops)
+    let object: [String: Any] = ["schema": 1, "items": totals.keys.sorted().map { ["name": $0, "units": totals[$0]!] }]
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    guard let json = String(data: data, encoding: .utf8) else { throw NSError(domain: "WindowSeat", code: 22, userInfo: [NSLocalizedDescriptionKey: "Could not encode packing list as UTF-8"]) }
+    return json + "\n"
+}
+
 func htmlEscape(_ value: String) -> String {
     value.replacingOccurrences(of: "&", with: "&amp;")
         .replacingOccurrences(of: "<", with: "&lt;")
@@ -141,8 +164,8 @@ func renderHTML(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     """
 }
 
-func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
-    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
+func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, packingList: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
+    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, packingList = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
     while index < arguments.count {
         switch arguments[index] {
         case "--seed": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
@@ -154,6 +177,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         case "--start": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 10, userInfo: [NSLocalizedDescriptionKey: "--start needs a destination name"]) }; start = arguments[index]
         case "--no-pack": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--no-pack needs an item name"]) }; noPack.append(arguments[index])
         case "--reverse": routeOptionUsed = true; reverse = true
+        case "--packing-list": packingList = true
         case "--catalog": catalog = true
         case "--format": index += 1; guard index < arguments.count, ["text", "html", "json"].contains(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text, html, or json"]) }; format = arguments[index]
         case "--self-test": selfTest = true
@@ -162,7 +186,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         }
         index += 1
     }
-    return (seed, pack, save, avoids, only, format, stops, start, noPack, reverse, catalog, routeOptionUsed, selfTest, help)
+    return (seed, pack, save, avoids, only, format, stops, start, noPack, reverse, packingList, catalog, routeOptionUsed, selfTest, help)
 }
 
 func resolveDestination(_ name: String) throws -> Int {
@@ -235,6 +259,7 @@ func runSelfTests() -> Bool {
     do { let parsed = try parse(arguments: ["--no-pack", "PENCIL", "--no-pack", "pencil"]); guard parsed.noPack.count == 2, try resolvePackingExclusions(parsed.noPack) == ["pencil"] else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--reverse"]); guard parsed.reverse else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--only", "Marmalade Moon", "--only", "The Inland Sea"]); guard parsed.only.count == 2 else { return false } } catch { return false }
+    do { let parsed = try parse(arguments: ["--packing-list", "--format", "json"]); guard parsed.packingList, parsed.format == "json" else { return false } } catch { return false }
     do { let help = try parse(arguments: ["--help"]); guard help.help else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["mArMaLaDe MoOn", "The Inland Sea", "the inland sea"]); guard avoided.count == 2 else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["Hotel Yesterday"]); let a = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); let b = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); guard a == b, !a.contains("Hotel Yesterday") else { return false } } catch { return false }
@@ -264,15 +289,21 @@ func runSelfTests() -> Bool {
         guard let data = catalog.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let entries = object["destinations"] as? [[String: Any]], entries.count == destinations.count, entries.first?["name"] as? String == destinations[0].name else { return false }
         guard renderCatalog().contains("WINDOW SEAT DESTINATION CATALOG"), renderCatalogHTML().contains("<article>") else { return false }
     } catch { return false }
+    do {
+        let list = try renderPackingListJSON(forwardStops)
+        guard let data = list.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], object["schema"] as? Int == 1, object["items"] is [[String: Any]] else { return false }
+        guard renderPackingList(forwardStops).contains("WINDOW SEAT PACKING LIST") else { return false }
+    } catch { return false }
     return first.contains("Marmalade") || first.contains("Junction") || first.contains("Sea") || first.contains("Heights")
 }
 
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
-    if options.catalog && (options.routeOptionUsed || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
+    if options.catalog && (options.routeOptionUsed || options.packingList || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
+    if options.packingList && options.format == "html" { throw NSError(domain: "WindowSeat", code: 23, userInfo: [NSLocalizedDescriptionKey: "--packing-list supports text or json, not html"]) }
     if options.reverse && options.start != nil { throw NSError(domain: "WindowSeat", code: 16, userInfo: [NSLocalizedDescriptionKey: "--reverse cannot be combined with --start"]) }
     if options.help {
-        print("Usage: window-seat [--catalog] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--self-test]")
+        print("Usage: window-seat [--catalog | --packing-list] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--self-test]")
         print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))")
         let validPackingItems = Set(destinations.flatMap { $0.packing.map { $0.0 } }).sorted()
         print("Valid packing items: \(validPackingItems.joined(separator: ", "))")
@@ -304,7 +335,11 @@ do {
     var stops = itinerary(seed: options.seed, packLimit: options.pack, excluded: excluded, stopCount: options.stops, startingIndex: startingIndex, excludedPacking: excludedPacking, allowed: allowed)
     if options.reverse { stops.reverse() }
     let output: String
-    if options.format == "html" {
+    if options.packingList && options.format == "json" {
+        output = try renderPackingListJSON(stops)
+    } else if options.packingList {
+        output = renderPackingList(stops)
+    } else if options.format == "html" {
         output = renderHTML(seed: options.seed, packLimit: options.pack, stops: stops)
     } else if options.format == "json" {
         output = try renderJSON(seed: options.seed, packLimit: options.pack, stops: stops)
