@@ -57,6 +57,29 @@ func render(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     return output
 }
 
+func renderJSON(seed: Int, packLimit: Int, stops: [Stop]) throws -> String {
+    let packed = stops.flatMap(\.packed)
+    let object: [String: Any] = [
+        "schema": 1,
+        "seed": seed,
+        "packing_allowance": packLimit,
+        "packing_used": packed.reduce(0) { $0 + $1.1 },
+        "total_distance": stops.reduce(0) { $0 + $1.distance },
+        "stops": stops.map { stop in
+            [
+                "name": stop.destination.name,
+                "tagline": stop.destination.mood,
+                "story": stop.destination.postcard,
+                "distance": stop.distance,
+                "packed_items": stop.packed.map { ["name": $0.0, "units": $0.1] }
+            ] as [String: Any]
+        }
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    guard let json = String(data: data, encoding: .utf8) else { throw NSError(domain: "WindowSeat", code: 10, userInfo: [NSLocalizedDescriptionKey: "Could not encode JSON as UTF-8"]) }
+    return json + "\n"
+}
+
 func htmlEscape(_ value: String) -> String {
     value.replacingOccurrences(of: "&", with: "&amp;")
         .replacingOccurrences(of: "<", with: "&lt;")
@@ -90,7 +113,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         case "--save": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 3, userInfo: [NSLocalizedDescriptionKey: "--save needs a file path"]) }; save = arguments[index]
         case "--avoid": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 5, userInfo: [NSLocalizedDescriptionKey: "--avoid needs a destination name"]) }; avoids.append(arguments[index])
         case "--stops": index += 1; guard index < arguments.count, let value = Int(arguments[index]), (1...destinations.count).contains(value) else { throw NSError(domain: "WindowSeat", code: 9, userInfo: [NSLocalizedDescriptionKey: "--stops must be a whole number from 1 to \(destinations.count)"]) }; stops = value
-        case "--format": index += 1; guard index < arguments.count, arguments[index] == "text" || arguments[index] == "html" else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text or html"]) }; format = arguments[index]
+        case "--format": index += 1; guard index < arguments.count, ["text", "html", "json"].contains(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text, html, or json"]) }; format = arguments[index]
         case "--self-test": selfTest = true
         case "--help": help = true
         default: throw NSError(domain: "WindowSeat", code: 4, userInfo: [NSLocalizedDescriptionKey: "Unknown option: \(arguments[index])"])
@@ -143,16 +166,28 @@ func runSelfTests() -> Bool {
     guard htmlEscape("<tag attr=\"x\">&'") == "&lt;tag attr=&quot;x&quot;&gt;&amp;&#39;" else { return false }
     let html = renderHTML(seed: 42, packLimit: 6, stops: itinerary(seed: 42, packLimit: 6))
     guard html.contains("<!doctype html>"), html.contains("@media print"), !html.contains("<tag") else { return false }
+    do {
+        let json = try renderJSON(seed: 42, packLimit: 6, stops: itinerary(seed: 42, packLimit: 6))
+        guard let data = json.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let jsonStops = object["stops"] as? [[String: Any]], jsonStops.count == 4, object["schema"] as? Int == 1, object["total_distance"] is Int else { return false }
+        guard json.contains("Marmalade Moon") else { return false }
+    } catch { return false }
     return first.contains("Marmalade") || first.contains("Junction") || first.contains("Sea") || first.contains("Heights")
 }
 
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
-    if options.help { print("Usage: window-seat [--seed N] [--pack N] [--stops N] [--avoid NAME]... [--format text|html] [--save PATH] [--self-test]"); print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))"); exit(0) }
+    if options.help { print("Usage: window-seat [--seed N] [--pack N] [--stops N] [--avoid NAME]... [--format text|html|json] [--save PATH] [--self-test]"); print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))"); exit(0) }
     if options.selfTest { let passed = runSelfTests(); print(passed ? "self-tests passed: deterministic seeds, unique stops, packing bounds, Unicode and option errors" : "self-tests failed"); exit(passed ? 0 : 1) }
     let excluded = try resolveAvoids(options.avoids, requiredStops: options.stops)
     let stops = itinerary(seed: options.seed, packLimit: options.pack, excluded: excluded, stopCount: options.stops)
-    let output = options.format == "html" ? renderHTML(seed: options.seed, packLimit: options.pack, stops: stops) : render(seed: options.seed, packLimit: options.pack, stops: stops)
+    let output: String
+    if options.format == "html" {
+        output = renderHTML(seed: options.seed, packLimit: options.pack, stops: stops)
+    } else if options.format == "json" {
+        output = try renderJSON(seed: options.seed, packLimit: options.pack, stops: stops)
+    } else {
+        output = render(seed: options.seed, packLimit: options.pack, stops: stops)
+    }
+    if let path = options.save { do { try output.write(toFile: path, atomically: true, encoding: .utf8); fputs("Saved postcard to \(path).\n", stderr) } catch { fputs("Could not save itinerary: \(error.localizedDescription)\n", stderr); exit(5) } }
     print(output, terminator: "")
-    if let path = options.save { do { try output.write(toFile: path, atomically: true, encoding: .utf8); print("Saved postcard to \(path).") } catch { fputs("Could not save itinerary: \(error.localizedDescription)\n", stderr); exit(5) } }
 } catch { fputs("Window Seat: \(error.localizedDescription)\n", stderr); exit(2) }
