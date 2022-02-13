@@ -81,6 +81,37 @@ func renderJSON(seed: Int, packLimit: Int, stops: [Stop]) throws -> String {
     return json + "\n"
 }
 
+func renderCatalog() -> String {
+    var output = "WINDOW SEAT DESTINATION CATALOG\n\n"
+    for destination in destinations {
+        let items = destination.packing.map { $0.0 + " (" + String($0.1) + ")" }.joined(separator: ", ")
+        output += destination.name + "\n  Mood: " + destination.mood + "\n  Story: " + destination.postcard + "\n  Packing: " + items + "\n\n"
+    }
+    output += "All destinations and stories are invented."
+    return output + "\n"
+}
+
+func renderCatalogJSON() throws -> String {
+    let object: [String: Any] = [
+        "schema": 1,
+        "destinations": destinations.map { destination in
+            ["name": destination.name, "mood": destination.mood, "story": destination.postcard,
+             "packing_items": destination.packing.map { ["name": $0.0, "units": $0.1] }] as [String: Any]
+        }
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    guard let json = String(data: data, encoding: .utf8) else { throw NSError(domain: "WindowSeat", code: 14, userInfo: [NSLocalizedDescriptionKey: "Could not encode catalog as UTF-8"]) }
+    return json + "\n"
+}
+
+func renderCatalogHTML() -> String {
+    let cards = destinations.map { destination in
+        let items = destination.packing.map { "\(htmlEscape($0.0)) (\($0.1) units)" }.joined(separator: ", ")
+        return "<article><h2>\(htmlEscape(destination.name))</h2><p><b>MOOD</b> \(htmlEscape(destination.mood))</p><p>\(htmlEscape(destination.postcard))</p><p><b>PACKING</b> \(items)</p></article>"
+    }.joined(separator: "\n")
+    return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Window Seat · catalog</title><style>body{max-width:820px;margin:40px auto;padding:0 24px;background:#f5f0e6;color:#1e2b2b;font-family:Georgia,serif}article{border-top:2px solid;padding:18px 0}h1{font-size:48px}h2{color:#e85d3f}p{line-height:1.5}b{font:700 11px monospace}</style></head><body><h1>Window Seat destinations</h1><p>A fictional stay-at-home travel catalog.</p>\(cards)<footer>All destinations and stories are invented. Created retrospectively in September 2026.</footer></body></html>"
+}
+
 func htmlEscape(_ value: String) -> String {
     value.replacingOccurrences(of: "&", with: "&amp;")
         .replacingOccurrences(of: "<", with: "&lt;")
@@ -105,17 +136,18 @@ func renderHTML(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     """
 }
 
-func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], format: String, stops: Int, start: String?, noPack: [String], selfTest: Bool, help: Bool) {
-    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], selfTest = false, help = false; var index = 0
+func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], format: String, stops: Int, start: String?, noPack: [String], catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
+    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
     while index < arguments.count {
         switch arguments[index] {
-        case "--seed": index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
-        case "--pack": index += 1; guard index < arguments.count, let value = Int(arguments[index]), value > 0 else { throw NSError(domain: "WindowSeat", code: 2, userInfo: [NSLocalizedDescriptionKey: "--pack needs a positive whole number"]) }; pack = value
+        case "--seed": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
+        case "--pack": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]), value > 0 else { throw NSError(domain: "WindowSeat", code: 2, userInfo: [NSLocalizedDescriptionKey: "--pack needs a positive whole number"]) }; pack = value
         case "--save": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 3, userInfo: [NSLocalizedDescriptionKey: "--save needs a file path"]) }; save = arguments[index]
-        case "--avoid": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 5, userInfo: [NSLocalizedDescriptionKey: "--avoid needs a destination name"]) }; avoids.append(arguments[index])
-        case "--stops": index += 1; guard index < arguments.count, let value = Int(arguments[index]), (1...destinations.count).contains(value) else { throw NSError(domain: "WindowSeat", code: 9, userInfo: [NSLocalizedDescriptionKey: "--stops must be a whole number from 1 to \(destinations.count)"]) }; stops = value
-        case "--start": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 10, userInfo: [NSLocalizedDescriptionKey: "--start needs a destination name"]) }; start = arguments[index]
-        case "--no-pack": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--no-pack needs an item name"]) }; noPack.append(arguments[index])
+        case "--avoid": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 5, userInfo: [NSLocalizedDescriptionKey: "--avoid needs a destination name"]) }; avoids.append(arguments[index])
+        case "--stops": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]), (1...destinations.count).contains(value) else { throw NSError(domain: "WindowSeat", code: 9, userInfo: [NSLocalizedDescriptionKey: "--stops must be a whole number from 1 to \(destinations.count)"]) }; stops = value
+        case "--start": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 10, userInfo: [NSLocalizedDescriptionKey: "--start needs a destination name"]) }; start = arguments[index]
+        case "--no-pack": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--no-pack needs an item name"]) }; noPack.append(arguments[index])
+        case "--catalog": catalog = true
         case "--format": index += 1; guard index < arguments.count, ["text", "html", "json"].contains(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text, html, or json"]) }; format = arguments[index]
         case "--self-test": selfTest = true
         case "--help": help = true
@@ -123,7 +155,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         }
         index += 1
     }
-    return (seed, pack, save, avoids, format, stops, start, noPack, selfTest, help)
+    return (seed, pack, save, avoids, format, stops, start, noPack, catalog, routeOptionUsed, selfTest, help)
 }
 
 func resolveDestination(_ name: String) throws -> Int {
@@ -199,19 +231,34 @@ func runSelfTests() -> Bool {
         guard let data = json.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let jsonStops = object["stops"] as? [[String: Any]], jsonStops.count == 4, object["schema"] as? Int == 1, object["total_distance"] is Int else { return false }
         guard json.contains("Marmalade Moon") else { return false }
     } catch { return false }
+    do {
+        let catalog = try renderCatalogJSON()
+        guard let data = catalog.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let entries = object["destinations"] as? [[String: Any]], entries.count == destinations.count, entries.first?["name"] as? String == destinations[0].name else { return false }
+        guard renderCatalog().contains("WINDOW SEAT DESTINATION CATALOG"), renderCatalogHTML().contains("<article>") else { return false }
+    } catch { return false }
     return first.contains("Marmalade") || first.contains("Junction") || first.contains("Sea") || first.contains("Heights")
 }
 
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
+    if options.catalog && (options.routeOptionUsed || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
     if options.help {
-        print("Usage: window-seat [--seed N] [--pack N] [--stops N] [--start NAME] [--avoid NAME]... [--no-pack ITEM]... [--format text|html|json] [--save PATH] [--self-test]")
+        print("Usage: window-seat [--catalog] [--seed N] [--pack N] [--stops N] [--start NAME] [--avoid NAME]... [--no-pack ITEM]... [--format text|html|json] [--save PATH] [--self-test]")
         print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))")
         let validPackingItems = Set(destinations.flatMap { $0.packing.map { $0.0 } }).sorted()
         print("Valid packing items: \(validPackingItems.joined(separator: ", "))")
         exit(0)
     }
     if options.selfTest { let passed = runSelfTests(); print(passed ? "self-tests passed: deterministic seeds, unique stops, packing bounds, Unicode and option errors" : "self-tests failed"); exit(passed ? 0 : 1) }
+    if options.catalog {
+        let output: String
+        if options.format == "html" { output = renderCatalogHTML() }
+        else if options.format == "json" { output = try renderCatalogJSON() }
+        else { output = renderCatalog() }
+        if let path = options.save { do { try output.write(toFile: path, atomically: true, encoding: .utf8); fputs("Saved catalog to \(path).\n", stderr) } catch { fputs("Could not save catalog: \(error.localizedDescription)\n", stderr); exit(5) } }
+        print(output, terminator: "")
+        exit(0)
+    }
     let excluded = try resolveAvoids(options.avoids, requiredStops: options.stops)
     let startingIndex = try options.start.map(resolveDestination)
     if let startingIndex, excluded.contains(startingIndex) { throw NSError(domain: "WindowSeat", code: 12, userInfo: [NSLocalizedDescriptionKey: "--start destination is excluded by --avoid"]) }
