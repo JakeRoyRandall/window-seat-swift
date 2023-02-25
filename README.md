@@ -27,3 +27,5 @@ Options are `--catalog`, `--seed <whole number>`, `--pack <positive whole number
 Repeat `--only NAME` to restrict the destination pool. Names match without case sensitivity; duplicates are ignored. Include at least the requested stop count and any selected start. Overlap with `--avoid` is an error. Routes without `--only` retain their previous seeded output.
 
 `--packing-list` prints an alphabetized list of packed items and their budget unit costs, aggregated from the selected route. It supports text or JSON and respects route and packing exclusions; HTML and catalog combinations are rejected. Units represent packing budget, not item quantity.
+
+Saves now refuse existing files by default using exclusive creation. Add `--force` with `--save PATH` to replace one atomically. This applies to all output modes. Save errors preserve their diagnostics and success notices go to stderr.

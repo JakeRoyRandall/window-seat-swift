@@ -140,6 +140,19 @@ func renderPackingListJSON(_ stops: [Stop]) throws -> String {
     return json + "\n"
 }
 
+func saveOutput(_ output: String, path: String, force: Bool, label: String) throws {
+    let data = Data(output.utf8)
+    do {
+        try data.write(to: URL(fileURLWithPath: path), options: force ? [.atomic] : [.withoutOverwriting])
+    } catch let error as NSError {
+        if !force && error.domain == NSCocoaErrorDomain && error.code == NSFileWriteFileExistsError {
+            throw NSError(domain: "WindowSeat", code: 24, userInfo: [NSLocalizedDescriptionKey: "Refusing to overwrite existing file; use --force"])
+        }
+        throw error
+    }
+    fputs("Saved \(label) to \(path).\n", stderr)
+}
+
 func htmlEscape(_ value: String) -> String {
     value.replacingOccurrences(of: "&", with: "&amp;")
         .replacingOccurrences(of: "<", with: "&lt;")
@@ -164,13 +177,14 @@ func renderHTML(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     """
 }
 
-func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, packingList: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
-    var seed = 2020, pack = 6, save: String?, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, packingList = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
+func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, force: Bool, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, packingList: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
+    var seed = 2020, pack = 6, save: String?, force = false, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, packingList = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
     while index < arguments.count {
         switch arguments[index] {
         case "--seed": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
         case "--pack": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]), value > 0 else { throw NSError(domain: "WindowSeat", code: 2, userInfo: [NSLocalizedDescriptionKey: "--pack needs a positive whole number"]) }; pack = value
         case "--save": index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 3, userInfo: [NSLocalizedDescriptionKey: "--save needs a file path"]) }; save = arguments[index]
+        case "--force": force = true
         case "--avoid": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 5, userInfo: [NSLocalizedDescriptionKey: "--avoid needs a destination name"]) }; avoids.append(arguments[index])
         case "--only": routeOptionUsed = true; index += 1; guard index < arguments.count, !arguments[index].isEmpty else { throw NSError(domain: "WindowSeat", code: 17, userInfo: [NSLocalizedDescriptionKey: "--only needs a destination name"]) }; only.append(arguments[index])
         case "--stops": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]), (1...destinations.count).contains(value) else { throw NSError(domain: "WindowSeat", code: 9, userInfo: [NSLocalizedDescriptionKey: "--stops must be a whole number from 1 to \(destinations.count)"]) }; stops = value
@@ -186,7 +200,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         }
         index += 1
     }
-    return (seed, pack, save, avoids, only, format, stops, start, noPack, reverse, packingList, catalog, routeOptionUsed, selfTest, help)
+    return (seed, pack, save, force, avoids, only, format, stops, start, noPack, reverse, packingList, catalog, routeOptionUsed, selfTest, help)
 }
 
 func resolveDestination(_ name: String) throws -> Int {
@@ -260,6 +274,7 @@ func runSelfTests() -> Bool {
     do { let parsed = try parse(arguments: ["--reverse"]); guard parsed.reverse else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--only", "Marmalade Moon", "--only", "The Inland Sea"]); guard parsed.only.count == 2 else { return false } } catch { return false }
     do { let parsed = try parse(arguments: ["--packing-list", "--format", "json"]); guard parsed.packingList, parsed.format == "json" else { return false } } catch { return false }
+    do { let parsed = try parse(arguments: ["--force", "--save", "out.txt"]); guard parsed.force, parsed.save == "out.txt" else { return false } } catch { return false }
     do { let help = try parse(arguments: ["--help"]); guard help.help else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["mArMaLaDe MoOn", "The Inland Sea", "the inland sea"]); guard avoided.count == 2 else { return false } } catch { return false }
     do { let avoided = try resolveAvoids(["Hotel Yesterday"]); let a = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); let b = render(seed: 9, packLimit: 4, stops: itinerary(seed: 9, packLimit: 4, excluded: avoided)); guard a == b, !a.contains("Hotel Yesterday") else { return false } } catch { return false }
@@ -299,11 +314,12 @@ func runSelfTests() -> Bool {
 
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
+    if options.force && options.save == nil { throw NSError(domain: "WindowSeat", code: 25, userInfo: [NSLocalizedDescriptionKey: "--force requires --save"]) }
     if options.catalog && (options.routeOptionUsed || options.packingList || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
     if options.packingList && options.format == "html" { throw NSError(domain: "WindowSeat", code: 23, userInfo: [NSLocalizedDescriptionKey: "--packing-list supports text or json, not html"]) }
     if options.reverse && options.start != nil { throw NSError(domain: "WindowSeat", code: 16, userInfo: [NSLocalizedDescriptionKey: "--reverse cannot be combined with --start"]) }
     if options.help {
-        print("Usage: window-seat [--catalog | --packing-list] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--self-test]")
+        print("Usage: window-seat [--catalog | --packing-list] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--force] [--self-test]")
         print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))")
         let validPackingItems = Set(destinations.flatMap { $0.packing.map { $0.0 } }).sorted()
         print("Valid packing items: \(validPackingItems.joined(separator: ", "))")
@@ -315,7 +331,7 @@ do {
         if options.format == "html" { output = renderCatalogHTML() }
         else if options.format == "json" { output = try renderCatalogJSON() }
         else { output = renderCatalog() }
-        if let path = options.save { do { try output.write(toFile: path, atomically: true, encoding: .utf8); fputs("Saved catalog to \(path).\n", stderr) } catch { fputs("Could not save catalog: \(error.localizedDescription)\n", stderr); exit(5) } }
+        if let path = options.save { do { try saveOutput(output, path: path, force: options.force, label: "catalog") } catch { fputs("Could not save catalog: \(error.localizedDescription)\n", stderr); exit(5) } }
         print(output, terminator: "")
         exit(0)
     }
@@ -346,6 +362,6 @@ do {
     } else {
         output = render(seed: options.seed, packLimit: options.pack, stops: stops)
     }
-    if let path = options.save { do { try output.write(toFile: path, atomically: true, encoding: .utf8); fputs("Saved postcard to \(path).\n", stderr) } catch { fputs("Could not save itinerary: \(error.localizedDescription)\n", stderr); exit(5) } }
+    if let path = options.save { do { try saveOutput(output, path: path, force: options.force, label: options.packingList ? "packing list" : "postcard") } catch { fputs("Could not save itinerary: \(error.localizedDescription)\n", stderr); exit(5) } }
     print(output, terminator: "")
 } catch { fputs("Window Seat: \(error.localizedDescription)\n", stderr); exit(2) }
