@@ -140,6 +140,21 @@ func renderPackingListJSON(_ stops: [Stop]) throws -> String {
     return json + "\n"
 }
 
+func packingCatalog() -> [(String, Int)] {
+    var costs: [String: Int] = [:]
+    for item in destinations.flatMap(\.packing) { costs[item.0] = item.1 }
+    return costs.keys.sorted().map { ($0, costs[$0]!) }
+}
+func renderPackingCatalog(_ json: Bool) throws -> String {
+    let items = packingCatalog()
+    if json {
+        let object: [String: Any] = ["schema": 1, "items": items.map { ["name": $0.0, "unit_cost": $0.1] }]
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(data: data, encoding: .utf8)! + "\n"
+    }
+    return "WINDOW SEAT PACKING CATALOG\n\n" + items.map { "- \($0.0): \($0.1) unit(s)" }.joined(separator: "\n") + "\n"
+}
+
 func saveOutput(_ output: String, path: String, force: Bool, label: String) throws {
     let data = Data(output.utf8)
     do {
@@ -177,8 +192,8 @@ func renderHTML(seed: Int, packLimit: Int, stops: [Stop]) -> String {
     """
 }
 
-func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, force: Bool, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, packingList: Bool, catalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
-    var seed = 2020, pack = 6, save: String?, force = false, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, packingList = false, catalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
+func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, force: Bool, avoids: [String], only: [String], format: String, stops: Int, start: String?, noPack: [String], reverse: Bool, packingList: Bool, catalog: Bool, packingCatalog: Bool, routeOptionUsed: Bool, selfTest: Bool, help: Bool) {
+    var seed = 2020, pack = 6, save: String?, force = false, avoids: [String] = [], only: [String] = [], format = "text", stops = 4, start: String?, noPack: [String] = [], reverse = false, packingList = false, catalog = false, packingCatalog = false, routeOptionUsed = false, selfTest = false, help = false; var index = 0
     while index < arguments.count {
         switch arguments[index] {
         case "--seed": routeOptionUsed = true; index += 1; guard index < arguments.count, let value = Int(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 1, userInfo: [NSLocalizedDescriptionKey: "--seed needs a whole number"]) }; seed = value
@@ -193,6 +208,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         case "--reverse": routeOptionUsed = true; reverse = true
         case "--packing-list": packingList = true
         case "--catalog": catalog = true
+        case "--packing-catalog": packingCatalog = true
         case "--format": index += 1; guard index < arguments.count, ["text", "html", "json"].contains(arguments[index]) else { throw NSError(domain: "WindowSeat", code: 8, userInfo: [NSLocalizedDescriptionKey: "--format must be text, html, or json"]) }; format = arguments[index]
         case "--self-test": selfTest = true
         case "--help": help = true
@@ -200,7 +216,7 @@ func parse(arguments: [String]) throws -> (seed: Int, pack: Int, save: String?, 
         }
         index += 1
     }
-    return (seed, pack, save, force, avoids, only, format, stops, start, noPack, reverse, packingList, catalog, routeOptionUsed, selfTest, help)
+    return (seed, pack, save, force, avoids, only, format, stops, start, noPack, reverse, packingList, catalog, packingCatalog, routeOptionUsed, selfTest, help)
 }
 
 func resolveDestination(_ name: String) throws -> Int {
@@ -315,11 +331,12 @@ func runSelfTests() -> Bool {
 do {
     let options = try parse(arguments: Array(CommandLine.arguments.dropFirst()))
     if options.force && options.save == nil { throw NSError(domain: "WindowSeat", code: 25, userInfo: [NSLocalizedDescriptionKey: "--force requires --save"]) }
-    if options.catalog && (options.routeOptionUsed || options.packingList || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "--catalog cannot be combined with route options or --self-test"]) }
+    if (options.catalog || options.packingCatalog) && (options.routeOptionUsed || options.packingList || options.catalog && options.packingCatalog || options.selfTest) { throw NSError(domain: "WindowSeat", code: 15, userInfo: [NSLocalizedDescriptionKey: "catalogue modes cannot be combined with route options or each other"]) }
     if options.packingList && options.format == "html" { throw NSError(domain: "WindowSeat", code: 23, userInfo: [NSLocalizedDescriptionKey: "--packing-list supports text or json, not html"]) }
+    if options.packingCatalog && options.format == "html" { throw NSError(domain: "WindowSeat", code: 26, userInfo: [NSLocalizedDescriptionKey: "--packing-catalog supports text or json, not html"]) }
     if options.reverse && options.start != nil { throw NSError(domain: "WindowSeat", code: 16, userInfo: [NSLocalizedDescriptionKey: "--reverse cannot be combined with --start"]) }
     if options.help {
-        print("Usage: window-seat [--catalog | --packing-list] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--force] [--self-test]")
+        print("Usage: window-seat [--catalog | --packing-catalog | --packing-list] [--seed N] [--pack N] [--stops N] [--start NAME] [--only NAME]... [--avoid NAME]... [--no-pack ITEM]... [--reverse] [--format text|html|json] [--save PATH] [--force] [--self-test]")
         print("Valid destinations: \(destinations.map(\.name).joined(separator: ", "))")
         let validPackingItems = Set(destinations.flatMap { $0.packing.map { $0.0 } }).sorted()
         print("Valid packing items: \(validPackingItems.joined(separator: ", "))")
@@ -332,6 +349,12 @@ do {
         else if options.format == "json" { output = try renderCatalogJSON() }
         else { output = renderCatalog() }
         if let path = options.save { do { try saveOutput(output, path: path, force: options.force, label: "catalog") } catch { fputs("Could not save catalog: \(error.localizedDescription)\n", stderr); exit(5) } }
+        print(output, terminator: "")
+        exit(0)
+    }
+    if options.packingCatalog {
+        let output = try renderPackingCatalog(options.format == "json")
+        if let path = options.save { do { try saveOutput(output, path: path, force: options.force, label: "packing catalog") } catch { fputs("Could not save packing catalog: \(error.localizedDescription)\n", stderr); exit(5) } }
         print(output, terminator: "")
         exit(0)
     }
